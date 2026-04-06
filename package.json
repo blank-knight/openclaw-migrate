@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-account-switch",
+  "version": "1.0.0",
+  "description": "Claude Code 账户无缝切换器 - Windows CLI",
+  "bin": {
+    "ccs": "bin/ccs.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["claude", "account", "switch", "proxy"],
+  "license": "MIT",
+  "files": [
+    "bin/",
+    "src/"
+  ]
+}
