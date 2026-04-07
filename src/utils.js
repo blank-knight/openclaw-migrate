@@ -8,7 +8,9 @@ const HOME = os.homedir();
 const CCS_DIR = path.join(HOME, '.ccs');
 const CONFIG_PATH = path.join(CCS_DIR, 'config.json');
 const PID_PATH = path.join(CCS_DIR, 'daemon.pid');
+const KEEPALIVE_PID_PATH = path.join(CCS_DIR, 'keepalive.pid');
 const LOG_PATH = path.join(CCS_DIR, 'daemon.log');
+const KEEPALIVE_LOG_PATH = path.join(CCS_DIR, 'keepalive.log');
 const CREDENTIALS_PATH = path.join(HOME, '.claude', '.credentials.json');
 
 const PROXY_PORT = 9876;
@@ -91,7 +93,9 @@ module.exports = {
   CCS_DIR,
   CONFIG_PATH,
   PID_PATH,
+  KEEPALIVE_PID_PATH,
   LOG_PATH,
+  KEEPALIVE_LOG_PATH,
   CREDENTIALS_PATH,
   PROXY_PORT,
   CONTROL_PORT,

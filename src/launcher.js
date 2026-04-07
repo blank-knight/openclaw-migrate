@@ -79,10 +79,19 @@ async function launchClaude(args) {
     process.exit(1);
   }
 
-  // 2. 检查是否有已导入的账号
+  // 2. 检查是否有已导入的账号，同步 token，并读取真实 token
+  let activeToken = null;
   if (fs.existsSync(CONFIG_PATH)) {
     try {
-      const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      const TokenStore = require('./token-store');
+      const store = new TokenStore();
+
+      // 从 credentials 文件同步最新 token（防止外部刷新导致 CCS token 失效）
+      if (store.syncActiveFromCredentials()) {
+        console.log('🔄 已从 credentials 文件同步最新 token');
+      }
+
+      const config = store.config;
       if (
         !config.activeAccount ||
         !config.accounts[config.activeAccount]
@@ -94,6 +103,10 @@ async function launchClaude(args) {
         );
         process.exit(1);
       }
+      activeToken = config.accounts[config.activeAccount].accessToken;
+
+      // 将 CCS active 账号 token 写入 credentials 文件，确保 Claude Code 显示已登录
+      store.writeActiveToCredentials();
     } catch {
       /* 配置损坏，后续 daemon 会报错 */
     }
@@ -110,10 +123,11 @@ async function launchClaude(args) {
   console.log(' ✅');
 
   // 4. 启动 claude.exe，注入代理环境变量
+  // 使用真实 token 而非 dummy 值，避免 Claude Code 内部登录状态检查失败
   const env = {
     ...process.env,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${PROXY_PORT}`,
-    ANTHROPIC_AUTH_TOKEN: 'dummy-token-proxy-will-replace',
+    ANTHROPIC_AUTH_TOKEN: activeToken || 'placeholder',
   };
 
   const child = spawn(claudePath, args, {

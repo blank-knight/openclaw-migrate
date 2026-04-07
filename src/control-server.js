@@ -41,6 +41,8 @@ function createControlServer(tokenStore, options = {}) {
         const body = await readBody(req);
         const { account } = JSON.parse(body);
         tokenStore.switchAccount(account);
+        // daemon 运行中切换账号，同步到 credentials 文件供 Claude Code 使用
+        tokenStore.writeActiveToCredentials();
         return json(res, 200, { ok: true, activeAccount: account });
       }
 
@@ -75,10 +77,24 @@ function createControlServer(tokenStore, options = {}) {
           });
         }
 
+        // 查重：检查 token 是否已属于另一个账号
+        const dup = tokenStore.findDuplicateToken(name, oauth.accessToken);
+        if (dup) {
+          return json(res, 400, {
+            ok: false,
+            error: `该凭据已导入为账号 "${dup}"，不能重复导入为 "${name}"。请先在 Claude 中登录对应账号再导入。`,
+          });
+        }
+
         const account = tokenStore.importAccount(name, {
           ...oauth,
           importedFrom: filePath,
         });
+
+        // daemon 运行中导入账号，如果是活跃账号则同步到 credentials
+        if (tokenStore.getActiveAccountName() === name) {
+          tokenStore.writeActiveToCredentials();
+        }
 
         return json(res, 200, {
           ok: true,

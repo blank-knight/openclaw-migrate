@@ -1,6 +1,6 @@
 {
   "name": "claude-code-account-switch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Claude Code 账户无缝切换器 - Windows CLI",
   "bin": {
     "ccs": "bin/ccs.js"

@@ -30,6 +30,7 @@ const MANAGEMENT_COMMANDS = [
   'accounts',
   'doctor',
   'stop',
+  'keepalive',
 ];
 const BLOCKED_COMMANDS = ['auth', 'login', '/login', 'logout', '/logout'];
 
@@ -77,6 +78,8 @@ async function handleManagement(cmd, cmdArgs) {
       return handleDoctor();
     case 'stop':
       return handleStop();
+    case 'keepalive':
+      return handleKeepalive(cmdArgs);
   }
 }
 
@@ -100,6 +103,7 @@ async function handleImport(cmdArgs) {
     const data = JSON.parse(res.body);
     if (data.ok) {
       printImportResult(name, data.account);
+      await autoStartKeepalive();
       return;
     }
     console.error(`❌ ${data.error}`);
@@ -130,6 +134,15 @@ async function handleImport(cmdArgs) {
 
   const TokenStore = require(path.join(srcDir, 'token-store'));
   const store = new TokenStore();
+
+  // 查重：检查 token 是否已属于另一个账号
+  const dup = store.findDuplicateToken(name, oauth.accessToken);
+  if (dup) {
+    console.error(`❌ 该凭据已导入为账号 "${dup}"，不能重复导入为 "${name}"。`);
+    console.error(`   如需更新 "${name}"，请先在 Claude 中登录对应账号再导入。`);
+    process.exit(1);
+  }
+
   const account = store.importAccount(name, {
     ...oauth,
     importedFrom: credPath,
@@ -141,6 +154,9 @@ async function handleImport(cmdArgs) {
     expiresAt: account.expiresAt,
     expiresIn: formatExpiry(account.expiresAt),
   });
+  console.log(`   ℹ️  本地模式（daemon 未运行）`);
+
+  await autoStartKeepalive();
 }
 
 function printImportResult(name, info) {
@@ -178,7 +194,8 @@ async function handleSwitch(cmdArgs) {
   const store = new TokenStore();
   try {
     store.switchAccount(name);
-    console.log(`✅ 已切换到账号 "${name}"，下一次请求生效。`);
+    console.log(`✅ 已切换到账号 "${name}"（本地模式，daemon 未运行）。`);
+    console.log(`   使用 ccs 启动 Claude 时会自动启动 daemon。`);
   } catch (err) {
     console.error(`❌ ${err.message}`);
     process.exit(1);
@@ -218,11 +235,13 @@ async function handleStatus() {
 
 async function handleAccounts() {
   let accounts;
+  let daemonRunning = false;
 
   try {
     const res = await callControlApi('GET', '/accounts');
     const data = JSON.parse(res.body);
     accounts = data.accounts;
+    daemonRunning = true;
   } catch {
     // 本地读取
     if (fs.existsSync(CONFIG_PATH)) {
@@ -250,7 +269,8 @@ async function handleAccounts() {
     return;
   }
 
-  console.log('=== 已导入账号 ===');
+  const daemonStatus = daemonRunning ? 'Daemon: 运行中 ✅' : 'Daemon: 未运行';
+  console.log(`=== 已导入账号 === (${daemonStatus})`);
   for (const [name, info] of Object.entries(accounts)) {
     const marker = info.isActive ? ' (当前)' : '';
     console.log(`\n  ${name}${marker}`);
@@ -299,6 +319,14 @@ async function handleDoctor() {
     console.log('✅ Daemon: 运行中');
   } else {
     console.log('ℹ️  Daemon: 未运行（使用 ccs 启动 Claude 时会自动启动）');
+  }
+
+  // 4.5 Keepalive 状态
+  if (isKeepaliveRunning()) {
+    const pid = fs.readFileSync(KEEPALIVE_PID_PATH, 'utf8').trim();
+    console.log(`✅ Keepalive: 运行中 (PID: ${pid})`);
+  } else {
+    console.log('ℹ️  Keepalive: 未运行（使用 ccs keepalive 启动，或 import 时自动启动）');
   }
 
   // 5. 网络连通性
@@ -356,11 +384,110 @@ async function handleStop() {
   console.log('ℹ️  Daemon 未在运行。');
 }
 
+// ── keepalive ──────────────────────────────────────────
+
+const { KEEPALIVE_PID_PATH } = require(path.join(srcDir, 'utils'));
+const { spawn } = require('child_process');
+
+function isKeepaliveRunning() {
+  try {
+    if (!fs.existsSync(KEEPALIVE_PID_PATH)) return false;
+    const pid = parseInt(fs.readFileSync(KEEPALIVE_PID_PATH, 'utf8').trim(), 10);
+    process.kill(pid, 0); // 检查进程是否存在
+    return true;
+  } catch {
+    // 进程不存在，清理残留 PID 文件
+    try { fs.unlinkSync(KEEPALIVE_PID_PATH); } catch { /* ignore */ }
+    return false;
+  }
+}
+
+function startKeepaliveProcess() {
+  const keepalivePath = path.join(srcDir, 'keepalive.js');
+  const child = spawn(process.execPath, [keepalivePath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  return child.pid;
+}
+
+function stopKeepaliveProcess() {
+  try {
+    if (!fs.existsSync(KEEPALIVE_PID_PATH)) return false;
+    const pid = parseInt(fs.readFileSync(KEEPALIVE_PID_PATH, 'utf8').trim(), 10);
+    process.kill(pid, 'SIGTERM');
+    try { fs.unlinkSync(KEEPALIVE_PID_PATH); } catch { /* ignore */ }
+    return true;
+  } catch {
+    try { fs.unlinkSync(KEEPALIVE_PID_PATH); } catch { /* ignore */ }
+    return false;
+  }
+}
+
+async function handleKeepalive(cmdArgs) {
+  const subCmd = cmdArgs[0];
+
+  if (subCmd === 'stop') {
+    if (stopKeepaliveProcess()) {
+      console.log('✅ Keepalive 已停止');
+    } else {
+      console.log('ℹ️  Keepalive 未在运行');
+    }
+    return;
+  }
+
+  if (subCmd === 'status') {
+    if (isKeepaliveRunning()) {
+      const pid = fs.readFileSync(KEEPALIVE_PID_PATH, 'utf8').trim();
+      console.log(`✅ Keepalive 运行中 (PID: ${pid})`);
+    } else {
+      console.log('ℹ️  Keepalive 未在运行');
+    }
+    return;
+  }
+
+  // 默认：启动
+  if (isKeepaliveRunning()) {
+    const pid = fs.readFileSync(KEEPALIVE_PID_PATH, 'utf8').trim();
+    console.log(`ℹ️  Keepalive 已在运行 (PID: ${pid})`);
+    return;
+  }
+
+  const pid = startKeepaliveProcess();
+  // 等待 PID 文件出现，确认启动成功
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (fs.existsSync(KEEPALIVE_PID_PATH)) {
+      console.log(`✅ Keepalive 已启动 (PID: ${pid})，token 将自动保持活跃`);
+      return;
+    }
+  }
+  console.error('❌ Keepalive 启动超时，请查看日志: ~/.ccs/keepalive.log');
+  process.exit(1);
+}
+
+/** import 完成后自动启动 keepalive（如果未运行） */
+async function autoStartKeepalive() {
+  if (isKeepaliveRunning()) return;
+
+  startKeepaliveProcess();
+  // 等待启动
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (fs.existsSync(KEEPALIVE_PID_PATH)) {
+      console.log('🔄 Keepalive 已自动启动，token 将保持活跃');
+      return;
+    }
+  }
+}
+
 // ── help ────────────────────────────────────────────────
 
 function printHelp() {
   console.log(`
-Claude Code 账户切换器 (ccs) v1.0.0
+Claude Code 账户切换器 (ccs) v1.1.0
 
 用法:
   ccs [claude] [args...]          启动代理模式的 Claude Code
@@ -368,6 +495,9 @@ Claude Code 账户切换器 (ccs) v1.0.0
   ccs switch <名称>               切换当前账号（下一次请求生效）
   ccs status                      查看当前状态
   ccs accounts                    列出所有已导入账号
+  ccs keepalive                   启动 token 保活服务（import 后自动启动）
+  ccs keepalive stop              停止 token 保活服务
+  ccs keepalive status            查看保活服务状态
   ccs doctor                      诊断检查
   ccs stop                        停止后台 daemon
 
@@ -378,6 +508,7 @@ Claude Code 账户切换器 (ccs) v1.0.0
   ccs --dangerously-skip-permissions               同上
   ccs switch account_b                             切换到账号 B
   ccs status                                       查看状态
+  ccs keepalive                                    启动 token 保活
 `);
 }
 

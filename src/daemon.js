@@ -42,14 +42,13 @@ controlServer.listen(CONTROL_PORT, '127.0.0.1', () => {
   console.log(`控制服务已启动: http://127.0.0.1:${CONTROL_PORT}`);
 });
 
-// 启动后台 token 定时刷新
-tokenStore.startBackgroundRefresh();
+// 不再在 daemon 中启动后台定时刷新，由 keepalive 独占管理
+// 避免 daemon 与 keepalive 竞争消耗单次使用的 refresh token
 
 // ── 清理 ────────────────────────────────────────────────
 
 function cleanup() {
   console.log('收到停止信号，正在关闭...');
-  tokenStore.stopBackgroundRefresh();
 
   let closed = 0;
   const done = () => {
