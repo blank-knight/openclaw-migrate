@@ -1,4 +1,6 @@
-# CCS - Claude Code Account Switcher
+# OpenClaw Migrate
+
+> One-command OpenClaw instance migration + Claude Code account switch
 
 [中文](#中文说明) | [English](#english)
 
@@ -239,6 +241,68 @@ CCS uses multiple layers to keep tokens always valid:
 - `ccs` does not replace or modify the original `claude` command
 - Do not use the same account simultaneously in `ccs` and the original `claude` — their refresh tokens will invalidate each other
 - This tool is intended for personal local use. Please evaluate platform policy risks on your own
+
+---
+
+## 🚀 OpenClaw 一键迁移 (新增功能)
+
+将本地 OpenClaw AI 助手实例（记忆/人格/配置/技能）一键迁移到远程服务器。
+
+### 快速开始
+
+```bash
+# 1. 诊断环境
+ccs migrate doctor root@your-server-ip
+
+# 2. 预览迁移（不实际传输）
+ccs migrate root@your-server-ip --dry-run
+
+# 3. 正式迁移
+ccs migrate root@your-server-ip
+
+# 4. SSH 到远程，填入真实 API Key
+ssh root@your-server-ip
+nano ~/clawd/openclaw.json
+# 将 __MIGRATE_PLACEHOLDER__ 替换为真实值
+openclaw gateway restart
+```
+
+### 日常同步
+
+```bash
+# 只同步最新的记忆文件（增量）
+ccs migrate sync root@your-server-ip
+
+# 查看远程状态
+ccs migrate status root@your-server-ip
+```
+
+### 迁移包含的文件
+
+| 类型 | 文件 |
+|------|------|
+| 人格 | SOUL.md, IDENTITY.md |
+| 记忆 | MEMORY.md, memory/*.md |
+| 配置 | AGENTS.md, TOOLS.md, HEARTBEAT.md |
+| 技能 | skills/** |
+| 系统配置 | openclaw.json（API Key 脱敏传输） |
+
+### 排除的文件
+
+`.env`, `.git`, `node_modules`, `__pycache__`, `*.db`, `*.log`, `venv/`, `memory-bank/`, `polymarket-*`, `new-api` 等
+
+### 安全设计
+
+- openclaw.json 中的 API Key / Secret / Token 自动替换为 `__MIGRATE_PLACEHOLDER__`
+- 传输完成后需手动在远程填写真实值
+- rsync 增量传输 + scp fallback
+- 零第三方依赖，仅用 Node.js 内置模块
+
+### 前提条件
+
+- 本地：rsync、ssh 可用
+- 远程：Node.js >= 18
+- SSH 免密登录已配置（`ssh-copy-id user@host`）
 
 ## License
 
