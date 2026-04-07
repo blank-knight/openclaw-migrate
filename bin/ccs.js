@@ -31,6 +31,7 @@ const MANAGEMENT_COMMANDS = [
   'doctor',
   'stop',
   'keepalive',
+ 'migrate',
 ];
 const BLOCKED_COMMANDS = ['auth', 'login', '/login', 'logout', '/logout'];
 
@@ -80,6 +81,8 @@ async function handleManagement(cmd, cmdArgs) {
       return handleStop();
     case 'keepalive':
       return handleKeepalive(cmdArgs);
+    case 'migrate':
+      return handleMigrate(cmdArgs);
   }
 }
 
@@ -483,6 +486,86 @@ async function autoStartKeepalive() {
   }
 }
 
+// ── migrate ────────────────────────────────────────────
+
+async function handleMigrate(cmdArgs) {
+  const migrate = require(path.join(srcDir, 'migrate'));
+  const subCmd = cmdArgs[0];
+
+  if (!subCmd || subCmd === '--help' || subCmd === '-h') {
+    console.log(`
+OpenClaw 实例迁移
+
+用法:
+  ccs migrate <user@host>           完整迁移 OpenClaw 到远程服务器
+  ccs migrate sync <user@host>      增量同步记忆文件
+  ccs migrate status <user@host>    查看远程 OpenClaw 状态
+  ccs migrate doctor [user@host]    诊断本地/远程环境
+
+选项:
+  --dry-run            预览模式，不实际传输
+  --remote-path=PATH   指定远程路径（默认 ~/clawd）
+
+示例:
+  ccs migrate root@192.168.1.100
+  ccs migrate --dry-run root@myserver.com
+  ccs migrate sync root@myserver.com
+  ccs migrate doctor root@myserver.com
+`);
+    return;
+  }
+
+  // 解析选项
+  const options = {};
+  const positional = [];
+  for (const arg of cmdArgs) {
+    if (arg === '--dry-run') {
+      options.dryRun = true;
+    } else if (arg.startsWith('--remote-path=')) {
+      options.remotePath = arg.split('=')[1];
+    } else if (arg.startsWith('--timeout=')) {
+      options.timeout = parseInt(arg.split('=')[1]);
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  switch (subCmd) {
+    case 'sync': {
+      const userHost = positional[1];
+      if (!userHost) {
+        console.error('用法: ccs migrate sync <user@host>');
+        process.exit(1);
+      }
+      await migrate.migrateSync(userHost, options);
+      break;
+    }
+    case 'status': {
+      const userHost = positional[1];
+      if (!userHost) {
+        console.error('用法: ccs migrate status <user@host>');
+        process.exit(1);
+      }
+      await migrate.migrateStatus(userHost);
+      break;
+    }
+    case 'doctor': {
+      const userHost = positional[1];
+      await migrate.migrateDoctor(userHost);
+      break;
+    }
+    default: {
+      // 默认：完整迁移
+      const userHost = positional[0];
+      if (!userHost || userHost.startsWith('-')) {
+        console.error('用法: ccs migrate <user@host> [--dry-run] [--remote-path=PATH]');
+        process.exit(1);
+      }
+      await migrate.migrateFull(userHost, options);
+    }
+  }
+}
+
 // ── help ────────────────────────────────────────────────
 
 function printHelp() {
@@ -500,6 +583,11 @@ Claude Code 账户切换器 (ccs) v1.1.0
   ccs keepalive status            查看保活服务状态
   ccs doctor                      诊断检查
   ccs stop                        停止后台 daemon
+
+  ccs migrate <user@host>         一键迁移 OpenClaw 到远程服务器
+  ccs migrate sync <user@host>    增量同步记忆文件
+  ccs migrate status <user@host>  查看远程 OpenClaw 状态
+  ccs migrate doctor [user@host]  诊断迁移环境
 
 示例:
   ccs import account_a                            从默认位置导入
